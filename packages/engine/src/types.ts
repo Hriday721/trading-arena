@@ -1,16 +1,30 @@
 export type Side = "buy" | "sell";
 
-export type OrderType = "limit" | "market";
+export type OrderType = "limit" | "market" | "stop";
 
-export interface Order {
+interface BaseOrder {
   id: string;
   traderId: string;
   side: Side;
-  type: OrderType;
-  price: number;
   quantity: number;
   timestamp: number;
 }
+
+export interface LimitOrder extends BaseOrder {
+  type: "limit";
+  price: number;
+}
+
+export interface MarketOrder extends BaseOrder {
+  type: "market";
+}
+
+export interface StopOrder extends BaseOrder {
+  type: "stop";
+  stopPrice: number;
+}
+
+export type Order = LimitOrder | MarketOrder | StopOrder;
 
 export interface Trade {
   sequence: number;

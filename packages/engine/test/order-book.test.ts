@@ -1,18 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { OrderBook } from "../src/order-book";
-import type { Order, Side } from "../src/types";
-
-let clock = 0;
-
-const limit = (id: string, side: Side, price: number, quantity: number): Order => ({
-  id,
-  traderId: `trader-${id}`,
-  side,
-  type: "limit",
-  price,
-  quantity,
-  timestamp: clock++,
-});
+import { limit } from "./helpers";
 
 describe("OrderBook", () => {
   it("matches a buy and a sell at the same price into one trade", () => {
@@ -21,7 +9,12 @@ describe("OrderBook", () => {
     const trades = book.submit(limit("b1", "buy", 10000, 10));
 
     expect(trades).toHaveLength(1);
-    expect(trades[0]).toMatchObject({ buyOrderId: "b1", sellOrderId: "s1", price: 10000, quantity: 10 });
+    expect(trades[0]).toMatchObject({
+      buyOrderId: "b1",
+      sellOrderId: "s1",
+      price: 10000,
+      quantity: 10,
+    });
     expect(book.bestBid()).toBeUndefined();
     expect(book.bestAsk()).toBeUndefined();
   });
