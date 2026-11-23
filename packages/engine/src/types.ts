@@ -35,3 +35,18 @@ export interface Trade {
   quantity: number;
   timestamp: number;
 }
+
+export interface DepthLevel {
+  price: number;
+  quantity: number;
+  orders: number;
+  cumulative: number;
+}
+
+export interface DepthSnapshot {
+  bids: DepthLevel[];
+  asks: DepthLevel[];
+  lastPrice: number | undefined;
+  spread: number | undefined;
+  midPrice: number | undefined;
+}

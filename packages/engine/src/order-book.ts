@@ -1,4 +1,6 @@
+import { BookSide } from "./price-levels";
 import type {
+  DepthSnapshot,
   LimitOrder,
   MarketOrder,
   Order,
@@ -8,8 +10,8 @@ import type {
 } from "./types";
 
 export class OrderBook {
-  private bids: LimitOrder[] = [];
-  private asks: LimitOrder[] = [];
+  private bids = new BookSide("buy");
+  private asks = new BookSide("sell");
   private stops: StopOrder[] = [];
   private nextSequence = 1;
   private last: number | undefined;
@@ -25,18 +27,18 @@ export class OrderBook {
 
   cancel(orderId: string): boolean {
     return (
-      removeById(this.bids, orderId) ||
-      removeById(this.asks, orderId) ||
+      this.bids.remove(orderId) ||
+      this.asks.remove(orderId) ||
       removeById(this.stops, orderId)
     );
   }
 
   bestBid(): number | undefined {
-    return this.bids[0]?.price;
+    return this.bids.bestPrice();
   }
 
   bestAsk(): number | undefined {
-    return this.asks[0]?.price;
+    return this.asks.bestPrice();
   }
 
   spread(): number | undefined {
@@ -45,17 +47,32 @@ export class OrderBook {
     return bid === undefined || ask === undefined ? undefined : ask - bid;
   }
 
+  midPrice(): number | undefined {
+    const bid = this.bestBid();
+    const ask = this.bestAsk();
+    return bid === undefined || ask === undefined ? undefined : (bid + ask) / 2;
+  }
+
   lastPrice(): number | undefined {
     return this.last;
   }
 
   restingQuantity(side: Side): number {
-    const book = side === "buy" ? this.bids : this.asks;
-    return book.reduce((total, order) => total + order.quantity, 0);
+    return (side === "buy" ? this.bids : this.asks).totalQuantity();
   }
 
   pendingStops(): number {
     return this.stops.length;
+  }
+
+  depth(maxLevels?: number): DepthSnapshot {
+    return {
+      bids: this.bids.depth(maxLevels),
+      asks: this.asks.depth(maxLevels),
+      lastPrice: this.last,
+      spread: this.spread(),
+      midPrice: this.midPrice(),
+    };
   }
 
   private match(order: LimitOrder | MarketOrder): Trade[] {
@@ -63,12 +80,12 @@ export class OrderBook {
     const opposite = incoming.side === "buy" ? this.asks : this.bids;
     const trades: Trade[] = [];
 
+    let resting = opposite.best();
     while (
       incoming.quantity > 0 &&
-      opposite.length > 0 &&
-      this.crosses(incoming, opposite[0])
+      resting &&
+      this.crosses(incoming, resting)
     ) {
-      const resting = opposite[0];
       const quantity = Math.min(incoming.quantity, resting.quantity);
 
       trades.push({
@@ -83,8 +100,8 @@ export class OrderBook {
 
       this.last = resting.price;
       incoming.quantity -= quantity;
-      resting.quantity -= quantity;
-      if (resting.quantity === 0) opposite.shift();
+      opposite.fillBest(quantity);
+      resting = opposite.best();
     }
 
     if (incoming.quantity > 0 && incoming.type === "limit") this.rest(incoming);
@@ -102,13 +119,7 @@ export class OrderBook {
   }
 
   private rest(order: LimitOrder): void {
-    if (order.side === "buy") {
-      this.bids.push(order);
-      this.bids.sort((a, b) => b.price - a.price || a.timestamp - b.timestamp);
-    } else {
-      this.asks.push(order);
-      this.asks.sort((a, b) => a.price - b.price || a.timestamp - b.timestamp);
-    }
+    (order.side === "buy" ? this.bids : this.asks).add(order);
   }
 
   private triggerStops(timestamp: number): Trade[] {
