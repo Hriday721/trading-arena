@@ -2,13 +2,16 @@ import { DEFAULT_BOOK_CONFIG } from "./config";
 import { BookSide } from "./price-levels";
 import type {
   BookConfig,
+  BookEvent,
   DepthSnapshot,
   LimitOrder,
+  LoggedEvent,
   MarketOrder,
   ModifyChanges,
   ModifyResult,
   Order,
   PlaceResult,
+  Recording,
   Side,
   StopOrder,
   Trade,
@@ -27,6 +30,9 @@ export class OrderBook {
   private nextSequence = 1;
   private last: number | undefined;
   private readonly config: BookConfig;
+  private events: LoggedEvent[] = [];
+  private nextEventId = 1;
+  private tradeLog: Trade[] = [];
 
   constructor(config: Partial<BookConfig> = {}) {
     this.config = { ...DEFAULT_BOOK_CONFIG, ...config };
@@ -76,13 +82,15 @@ export class OrderBook {
       checkQuantity(quantity, this.config) ?? checkPrice(price, this.config);
     if (problem) return problem;
 
+    this.record({ type: "order-modified", orderId, changes: { ...changes } });
+
     if (price === current.price && quantity <= current.quantity) {
       side.reduce(orderId, quantity);
       return { ok: true, trades: [], keptPriority: true };
     }
 
-    this.cancel(orderId);
-    const trades = this.submit({
+    this.remove(orderId);
+    const trades = this.process({
       ...current,
       price,
       quantity,
@@ -92,20 +100,48 @@ export class OrderBook {
   }
 
   submit(order: Order): Trade[] {
-    if (order.type === "stop") {
-      this.stops.push({ ...order });
-      return this.triggerStops(order.timestamp);
-    }
-    const trades = this.match(order);
-    return [...trades, ...this.triggerStops(order.timestamp)];
+    this.record({ type: "order-submitted", order: { ...order } });
+    return this.process(order);
   }
 
   cancel(orderId: string): boolean {
-    return (
-      this.bids.remove(orderId) ||
-      this.asks.remove(orderId) ||
-      removeById(this.stops, orderId)
-    );
+    const removed = this.remove(orderId);
+    if (removed) this.record({ type: "order-cancelled", orderId });
+    return removed;
+  }
+
+  recording(): Recording {
+    return { config: { ...this.config }, events: structuredClone(this.events) };
+  }
+
+  static replay(
+    recording: Recording,
+    untilEventId = Number.POSITIVE_INFINITY,
+  ): OrderBook {
+    const book = new OrderBook(recording.config);
+    for (const { eventId, event } of recording.events) {
+      if (eventId > untilEventId) break;
+      switch (event.type) {
+        case "order-submitted":
+          book.submit(event.order);
+          break;
+        case "order-cancelled":
+          book.cancel(event.orderId);
+          break;
+        case "order-modified":
+          book.modify(event.orderId, event.changes);
+          break;
+      }
+    }
+    return book;
+  }
+
+  tape(): Trade[] {
+    return this.tradeLog.map((trade) => ({ ...trade }));
+  }
+
+  stopOrders(): StopOrder[] {
+    return this.stops.map((stop) => ({ ...stop }));
   }
 
   bestBid(): number | undefined {
@@ -158,6 +194,27 @@ export class OrderBook {
     };
   }
 
+  private record(event: BookEvent): void {
+    this.events.push({ eventId: this.nextEventId++, event });
+  }
+
+  private process(order: Order): Trade[] {
+    if (order.type === "stop") {
+      this.stops.push({ ...order });
+      return this.triggerStops(order.timestamp);
+    }
+    const trades = this.match(order);
+    return [...trades, ...this.triggerStops(order.timestamp)];
+  }
+
+  private remove(orderId: string): boolean {
+    return (
+      this.bids.remove(orderId) ||
+      this.asks.remove(orderId) ||
+      removeById(this.stops, orderId)
+    );
+  }
+
   private match(order: LimitOrder | MarketOrder): Trade[] {
     const incoming = { ...order };
     const opposite = incoming.side === "buy" ? this.asks : this.bids;
@@ -171,7 +228,7 @@ export class OrderBook {
     ) {
       const quantity = Math.min(incoming.quantity, resting.quantity);
 
-      trades.push({
+      const trade: Trade = {
         sequence: this.nextSequence++,
         aggressor: incoming.side,
         buyOrderId: incoming.side === "buy" ? incoming.id : resting.id,
@@ -179,7 +236,9 @@ export class OrderBook {
         price: resting.price,
         quantity,
         timestamp: incoming.timestamp,
-      });
+      };
+      trades.push(trade);
+      this.tradeLog.push(trade);
 
       this.last = resting.price;
       incoming.quantity -= quantity;

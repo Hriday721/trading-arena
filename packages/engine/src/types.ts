@@ -91,3 +91,18 @@ export interface ModifyChanges {
   quantity?: number;
   timestamp: number;
 }
+
+export type BookEvent =
+  | { type: "order-submitted"; order: Order }
+  | { type: "order-cancelled"; orderId: string }
+  | { type: "order-modified"; orderId: string; changes: ModifyChanges };
+
+export interface LoggedEvent {
+  eventId: number;
+  event: BookEvent;
+}
+
+export interface Recording {
+  config: BookConfig;
+  events: LoggedEvent[];
+}
