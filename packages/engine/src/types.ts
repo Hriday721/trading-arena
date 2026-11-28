@@ -50,3 +50,44 @@ export interface DepthSnapshot {
   spread: number | undefined;
   midPrice: number | undefined;
 }
+
+export interface BookConfig {
+  tickSize: number;
+  lotSize: number;
+}
+
+export type RejectReason =
+  | "invalid-quantity"
+  | "lot-size"
+  | "invalid-price"
+  | "tick-size"
+  | "duplicate-id"
+  | "unknown-order"
+  | "nothing-to-modify";
+
+export interface Rejected {
+  ok: false;
+  reason: RejectReason;
+  message: string;
+}
+
+export interface PlaceAccepted {
+  ok: true;
+  trades: Trade[];
+}
+
+export interface ModifyAccepted {
+  ok: true;
+  trades: Trade[];
+  keptPriority: boolean;
+}
+
+export type PlaceResult = PlaceAccepted | Rejected;
+
+export type ModifyResult = ModifyAccepted | Rejected;
+
+export interface ModifyChanges {
+  price?: number;
+  quantity?: number;
+  timestamp: number;
+}

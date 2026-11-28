@@ -1,13 +1,24 @@
+import { DEFAULT_BOOK_CONFIG } from "./config";
 import { BookSide } from "./price-levels";
 import type {
+  BookConfig,
   DepthSnapshot,
   LimitOrder,
   MarketOrder,
+  ModifyChanges,
+  ModifyResult,
   Order,
+  PlaceResult,
   Side,
   StopOrder,
   Trade,
 } from "./types";
+import {
+  checkPrice,
+  checkQuantity,
+  rejection,
+  validateNewOrder,
+} from "./validation";
 
 export class OrderBook {
   private bids = new BookSide("buy");
@@ -15,6 +26,70 @@ export class OrderBook {
   private stops: StopOrder[] = [];
   private nextSequence = 1;
   private last: number | undefined;
+  private readonly config: BookConfig;
+
+  constructor(config: Partial<BookConfig> = {}) {
+    this.config = { ...DEFAULT_BOOK_CONFIG, ...config };
+    if (!Number.isInteger(this.config.tickSize) || this.config.tickSize <= 0) {
+      throw new Error("tickSize must be a whole number above zero");
+    }
+    if (!Number.isInteger(this.config.lotSize) || this.config.lotSize <= 0) {
+      throw new Error("lotSize must be a whole number above zero");
+    }
+  }
+
+  place(order: Order): PlaceResult {
+    const problem = validateNewOrder(order, this.config);
+    if (problem) return problem;
+    if (order.type !== "market" && this.hasOrder(order.id)) {
+      return rejection(
+        "duplicate-id",
+        `An order with id "${order.id}" is already in the book`,
+      );
+    }
+    return { ok: true, trades: this.submit(order) };
+  }
+
+  modify(orderId: string, changes: ModifyChanges): ModifyResult {
+    if (changes.price === undefined && changes.quantity === undefined) {
+      return rejection(
+        "nothing-to-modify",
+        "Give a new price, a new quantity, or both",
+      );
+    }
+    const side = this.bids.has(orderId)
+      ? this.bids
+      : this.asks.has(orderId)
+        ? this.asks
+        : undefined;
+    const current = side?.get(orderId);
+    if (!side || !current) {
+      return rejection(
+        "unknown-order",
+        `No resting order with id "${orderId}"`,
+      );
+    }
+
+    const price = changes.price ?? current.price;
+    const quantity = changes.quantity ?? current.quantity;
+    const problem =
+      checkQuantity(quantity, this.config) ?? checkPrice(price, this.config);
+    if (problem) return problem;
+
+    if (price === current.price && quantity <= current.quantity) {
+      side.reduce(orderId, quantity);
+      return { ok: true, trades: [], keptPriority: true };
+    }
+
+    this.cancel(orderId);
+    const trades = this.submit({
+      ...current,
+      price,
+      quantity,
+      timestamp: changes.timestamp,
+    });
+    return { ok: true, trades, keptPriority: false };
+  }
 
   submit(order: Order): Trade[] {
     if (order.type === "stop") {
@@ -63,6 +138,14 @@ export class OrderBook {
 
   pendingStops(): number {
     return this.stops.length;
+  }
+
+  hasOrder(orderId: string): boolean {
+    return (
+      this.bids.has(orderId) ||
+      this.asks.has(orderId) ||
+      this.stops.some((s) => s.id === orderId)
+    );
   }
 
   depth(maxLevels?: number): DepthSnapshot {

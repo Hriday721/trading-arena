@@ -30,7 +30,11 @@ export class BookSide {
       level.orders.push(order);
       level.quantity += order.quantity;
     } else {
-      this.levels.splice(index, 0, { price: order.price, orders: [order], quantity: order.quantity });
+      this.levels.splice(index, 0, {
+        price: order.price,
+        orders: [order],
+        quantity: order.quantity,
+      });
     }
     this.byId.set(order.id, order);
   }
@@ -60,6 +64,25 @@ export class BookSide {
     return true;
   }
 
+  has(orderId: string): boolean {
+    return this.byId.has(orderId);
+  }
+
+  get(orderId: string): LimitOrder | undefined {
+    return this.byId.get(orderId);
+  }
+
+  reduce(orderId: string, newQuantity: number): boolean {
+    const order = this.byId.get(orderId);
+    if (!order || newQuantity <= 0 || newQuantity > order.quantity)
+      return false;
+    const level = this.levels.find((l) => l.price === order.price);
+    if (!level) return false;
+    level.quantity -= order.quantity - newQuantity;
+    order.quantity = newQuantity;
+    return true;
+  }
+
   totalQuantity(): number {
     return this.levels.reduce((total, level) => total + level.quantity, 0);
   }
@@ -68,7 +91,12 @@ export class BookSide {
     let cumulative = 0;
     return this.levels.slice(0, maxLevels).map((level) => {
       cumulative += level.quantity;
-      return { price: level.price, quantity: level.quantity, orders: level.orders.length, cumulative };
+      return {
+        price: level.price,
+        quantity: level.quantity,
+        orders: level.orders.length,
+        cumulative,
+      };
     });
   }
 
